@@ -218,6 +218,22 @@ async function sendFieldsToAPI(fieldData, retryCount = 0) {
   const requestTimeout = 15000;
 
   try {
+    // Get selected profile from storage
+    const { selectedProfile } = await chrome.storage.local.get([
+      "selectedProfile",
+    ]);
+
+    // Add profile_id to fieldData if selected
+    const requestData = {
+      ...fieldData,
+      profile_id:
+        selectedProfile === "default" || !selectedProfile
+          ? null
+          : selectedProfile,
+    };
+
+    console.log("📂 Using profile for autofill:", selectedProfile || "default");
+
     const headers = {
       "Content-Type": "application/json",
     };
@@ -229,7 +245,7 @@ async function sendFieldsToAPI(fieldData, retryCount = 0) {
       const response = await fetch(`${apiBaseUrl}/api/fields`, {
         method: "POST",
         headers: headers,
-        body: JSON.stringify(fieldData),
+        body: JSON.stringify(requestData),
         signal: controller.signal,
       });
 

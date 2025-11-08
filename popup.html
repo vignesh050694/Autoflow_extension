@@ -242,6 +242,26 @@
 
     <div id="error-container"></div>
 
+    <div id="profile-selector" style="margin-bottom: 16px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+        <label for="profile-dropdown" style="font-size: 13px; font-weight: 500; color: #333; margin: 0;">
+          Profile Context
+        </label>
+        <button id="refresh-profiles-btn"
+          style="padding: 4px 8px; background: #f5f5f5; border: 1px solid #d0d0d0; border-radius: 4px; font-size: 11px; cursor: pointer; color: #666;"
+          title="Refresh profiles list">
+          🔄 Refresh
+        </button>
+      </div>
+      <select id="profile-dropdown"
+        style="width: 100%; padding: 10px 12px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 14px; background-color: white; cursor: pointer; color: #333;">
+        <option value="default">Default</option>
+      </select>
+      <p style="font-size: 11px; color: #888; margin-top: 4px; margin-bottom: 0;">
+        Select which profile to use for autofill
+      </p>
+    </div>
+
     <div id="action-container" style="margin-bottom: 16px;">
       <button id="get-suggestions-button"
         style="width: 100%; padding: 12px; background-color: #1976d2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600;">

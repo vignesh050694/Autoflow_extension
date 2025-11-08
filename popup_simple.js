@@ -3,11 +3,8 @@
 // Request field data from background script
 function requestFieldData() {
   clearError();
-  showLoading(true);
 
   chrome.runtime.sendMessage({ type: "GET_FIELDS" }, (response) => {
-    showLoading(false);
-
     if (chrome.runtime.lastError) {
       console.error("Error getting fields:", chrome.runtime.lastError);
       showError(chrome.runtime.lastError.message);
@@ -20,7 +17,9 @@ function requestFieldData() {
       } else if (response.data.message) {
         showInfo(response.data.message);
       } else {
-        showInfo("No suggestions available yet. Waiting for form detection...");
+        showInfo(
+          "No suggestions available yet. Click 'Get Autofill Suggestions' to start."
+        );
       }
     } else {
       showInfo("No form fields detected on this page.");
@@ -28,57 +27,48 @@ function requestFieldData() {
   });
 }
 
-// Check API connection status
+// Check API connection status (removed - confusing status display)
 function checkAPIStatus() {
-  chrome.runtime.sendMessage({ type: "GET_API_STATUS" }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("Error checking API status:", chrome.runtime.lastError);
-      updateStatus("disconnected", "Error checking connection");
-      return;
-    }
-
-    if (response && response.success) {
-      updateStatus(response.status, getStatusMessage(response.status));
-    } else {
-      updateStatus("disconnected", "Backend disconnected");
-    }
-  });
+  // Status check removed - users don't need to see connection status
+  // Extension will show errors if backend is unreachable
 }
 
-// Get status message
-function getStatusMessage(status) {
-  switch (status) {
-    case "connected":
-      return "Connected to AutoFlow Backend";
-    case "disconnected":
-      return "Backend disconnected";
-    case "error":
-      return "Backend error";
-    default:
-      return "Unknown status";
-  }
-}
-
-// Update connection status display
+// Update connection status display (removed)
 function updateStatus(status, message) {
-  const statusElement = document.getElementById("status");
-  const statusText = document.getElementById("status-text");
-
-  statusElement.className = `status ${status}`;
-  statusText.textContent = message;
+  // No-op - status display removed
 }
 
 // Show/hide loading indicator
 function showLoading(show) {
+  const getSuggestionsButton = document.getElementById(
+    "get-suggestions-button"
+  );
   const statusElement = document.getElementById("status");
 
   if (show) {
-    statusElement.classList.add("loading");
-    statusElement.innerHTML =
-      '<div class="loading-spinner"></div><span id="status-text">Loading...</span>';
+    // Hide button and show loader
+    if (getSuggestionsButton) {
+      getSuggestionsButton.style.display = "none";
+    }
+
+    if (statusElement) {
+      statusElement.style.display = "block";
+      statusElement.classList.add("loading");
+      statusElement.innerHTML =
+        '<div class="loading-spinner"></div><span id="status-text">Processing...</span>';
+    }
   } else {
-    statusElement.classList.remove("loading");
-    checkAPIStatus();
+    // Show button and hide loader
+    if (getSuggestionsButton) {
+      getSuggestionsButton.style.display = "block";
+      getSuggestionsButton.disabled = false;
+      getSuggestionsButton.textContent = "Get Autofill Suggestions";
+    }
+
+    if (statusElement) {
+      statusElement.style.display = "none";
+      statusElement.classList.remove("loading");
+    }
   }
 }
 
@@ -239,16 +229,27 @@ function handleApplySuggestion(suggestion, index) {
   console.log("Applying suggestion:", suggestion);
 
   clearError();
-  showLoading(true);
+
+  // Disable the specific apply button
+  const applyButton = document.querySelector(
+    `.apply-btn[data-index="${index}"]`
+  );
+  if (applyButton) {
+    applyButton.disabled = true;
+    applyButton.textContent = "Applying...";
+  }
 
   chrome.runtime.sendMessage(
     { type: "APPLY_SUGGESTION", suggestion: suggestion },
     (response) => {
-      showLoading(false);
-
       if (chrome.runtime.lastError) {
         console.error("Error applying suggestion:", chrome.runtime.lastError);
         showError(chrome.runtime.lastError.message);
+
+        if (applyButton) {
+          applyButton.disabled = false;
+          applyButton.textContent = "Apply";
+        }
         return;
       }
 
@@ -259,6 +260,11 @@ function handleApplySuggestion(suggestion, index) {
       } else {
         console.error("Failed to apply suggestion:", response?.error);
         showError(response?.error || "Failed to apply suggestion");
+
+        if (applyButton) {
+          applyButton.disabled = false;
+          applyButton.textContent = "Apply";
+        }
       }
     }
   );
@@ -269,7 +275,6 @@ function handleApplyAll(suggestions) {
   console.log("Applying all suggestions:", suggestions);
 
   clearError();
-  showLoading(true);
 
   const applyAllButton = document.getElementById("apply-all-button");
   if (applyAllButton) {
@@ -280,8 +285,6 @@ function handleApplyAll(suggestions) {
   chrome.runtime.sendMessage(
     { type: "APPLY_ALL_SUGGESTIONS", suggestions: suggestions },
     (response) => {
-      showLoading(false);
-
       if (chrome.runtime.lastError) {
         console.error("Error applying suggestions:", chrome.runtime.lastError);
         showError(chrome.runtime.lastError.message);
@@ -368,15 +371,6 @@ function removeSuggestionItem(index) {
 
 // Handle "Get Suggestions" button click
 function handleGetSuggestions() {
-  const getSuggestionsButton = document.getElementById(
-    "get-suggestions-button"
-  );
-
-  if (getSuggestionsButton) {
-    getSuggestionsButton.disabled = true;
-    getSuggestionsButton.textContent = "Detecting fields...";
-  }
-
   clearError();
   showLoading(true);
 
@@ -388,47 +382,31 @@ function handleGetSuggestions() {
         tabs[0].id,
         { type: "DETECT_FIELDS" },
         (response) => {
-          showLoading(false);
-
           if (chrome.runtime.lastError) {
             console.error("⚠️ Content script error:", chrome.runtime.lastError);
+            showLoading(false);
             showError(
               "Content script not loaded. Please refresh the page and try again."
             );
-
-            if (getSuggestionsButton) {
-              getSuggestionsButton.disabled = false;
-              getSuggestionsButton.textContent = "Get Autofill Suggestions";
-            }
           } else {
             console.log("✅ Field detection response:", response);
 
             if (response && response.success) {
               if (response.sent) {
                 // User approved and data was sent to backend
-                // Wait a moment for the API response to be processed
-                setTimeout(() => {
-                  requestFieldData();
-                }, 1000);
+                // Keep loader showing - will be hidden when SUGGESTIONS_READY arrives
+                console.log("⏳ Waiting for backend response...");
               } else {
                 // User declined to send data
+                showLoading(false);
                 showInfo(
                   response.message ||
                     "Field detection completed but data was not sent to backend."
                 );
-
-                if (getSuggestionsButton) {
-                  getSuggestionsButton.disabled = false;
-                  getSuggestionsButton.textContent = "Get Autofill Suggestions";
-                }
               }
             } else {
+              showLoading(false);
               showError("Failed to detect fields. Please try again.");
-
-              if (getSuggestionsButton) {
-                getSuggestionsButton.disabled = false;
-                getSuggestionsButton.textContent = "Get Autofill Suggestions";
-              }
             }
           }
         }
@@ -436,20 +414,151 @@ function handleGetSuggestions() {
     } else {
       showLoading(false);
       showError("No active tab found.");
-
-      if (getSuggestionsButton) {
-        getSuggestionsButton.disabled = false;
-        getSuggestionsButton.textContent = "Get Autofill Suggestions";
-      }
     }
   });
+}
+
+// Load profiles from Postgres via backend API
+async function loadProfiles() {
+  try {
+    console.log("📂 Fetching profiles from Postgres...");
+    const response = await fetch("http://localhost:8000/api/profiles/");
+    if (!response.ok) {
+      console.error("❌ Failed to load profiles:", response.statusText);
+      return;
+    }
+
+    const data = await response.json();
+    console.log("✅ Received profiles from Postgres:", data.profiles);
+
+    const profileDropdown = document.getElementById("profile-dropdown");
+
+    // Clear existing options except default
+    profileDropdown.innerHTML = '<option value="default">Default</option>';
+
+    // Add profiles from Postgres backend
+    if (data.profiles && data.profiles.length > 0) {
+      data.profiles.forEach((profile) => {
+        // Skip default if it's already in the list
+        if (profile.name.toLowerCase() === "default") return;
+
+        const option = document.createElement("option");
+        // Use kebab-case for consistency with backend storage
+        option.value = profile.name.toLowerCase().replace(/\s+/g, "-");
+        option.textContent = `${profile.name} (${profile.document_count} docs)`;
+        profileDropdown.appendChild(option);
+
+        console.log(
+          `  ✓ Added profile: ${profile.name} (${profile.type}, ${profile.document_count} docs, ID: ${profile.profile_id})`
+        );
+      });
+    }
+
+    // Load saved profile selection from chrome.storage
+    chrome.storage.local.get(["selectedProfile"], (result) => {
+      if (result.selectedProfile) {
+        profileDropdown.value = result.selectedProfile;
+        console.log(
+          "📂 Restored saved profile selection:",
+          result.selectedProfile
+        );
+      }
+    });
+
+    console.log(
+      `✅ Successfully loaded ${
+        data.profiles?.length || 0
+      } profiles from Postgres`
+    );
+  } catch (error) {
+    console.error("❌ Error loading profiles from Postgres:", error);
+  }
+}
+
+// Save selected profile
+function saveSelectedProfile() {
+  const profileDropdown = document.getElementById("profile-dropdown");
+  const selectedProfile = profileDropdown.value;
+
+  chrome.storage.local.set({ selectedProfile }, () => {
+    console.log("💾 Saved profile selection:", selectedProfile);
+  });
+}
+
+// Get selected profile
+function getSelectedProfile() {
+  const profileDropdown = document.getElementById("profile-dropdown");
+  return profileDropdown.value === "default" ? null : profileDropdown.value;
+}
+
+// Set up automatic refresh when suggestions arrive from backend
+function setupAutoRefresh() {
+  // Listen for messages from background script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log("📨 Popup received message:", message.type);
+
+    if (message.type === "SUGGESTIONS_READY") {
+      console.log("✅ Suggestions are ready! Loading data immediately...");
+
+      // Hide loader and show button
+      showLoading(false);
+
+      // Load suggestions immediately
+      requestFieldData();
+
+      sendResponse({ received: true });
+    } else if (message.type === "FIELDS_DETECTED") {
+      console.log("✅ Fields detected! Auto-refreshing popup...");
+      requestFieldData();
+      sendResponse({ received: true });
+    } else if (message.type === "SUGGESTIONS_UPDATED") {
+      console.log("✅ Suggestions updated! Auto-refreshing popup...");
+
+      // Hide loader and show button
+      showLoading(false);
+
+      requestFieldData();
+      sendResponse({ received: true });
+    }
+
+    return true; // Keep message channel open for async response
+  });
+
+  console.log("✅ Auto-refresh listener set up");
 }
 
 // Initialize popup
 function initialize() {
   console.log("🚀 AutoFlow popup initialized (MVP - No Auth)");
 
-  checkAPIStatus();
+  // Hide status initially (no confusing "Connected" message)
+  const statusElement = document.getElementById("status");
+  if (statusElement) {
+    statusElement.style.display = "none";
+  }
+
+  loadProfiles(); // Load available profiles from Postgres
+
+  // Set up auto-refresh for suggestions
+  setupAutoRefresh();
+
+  // Listen for profile changes
+  const profileDropdown = document.getElementById("profile-dropdown");
+  if (profileDropdown) {
+    profileDropdown.addEventListener("change", () => {
+      saveSelectedProfile();
+      showSuccess("Profile switched successfully", true);
+    });
+  }
+
+  // Listen for refresh profiles button
+  const refreshProfilesBtn = document.getElementById("refresh-profiles-btn");
+  if (refreshProfilesBtn) {
+    refreshProfilesBtn.addEventListener("click", () => {
+      loadProfiles();
+      showSuccess("Profiles refreshed", true);
+    });
+  }
 
   // Add event listener to "Get Suggestions" button
   const getSuggestionsButton = document.getElementById(

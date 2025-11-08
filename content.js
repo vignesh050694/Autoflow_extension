@@ -86,9 +86,21 @@ function extractCustomElementMetadata(customElement) {
 
 // Detect all forms on the page (including shadow DOM components)
 function detectForms() {
-  const forms = document.querySelectorAll("form");
   const allFields = [];
 
+  // Check if this is a Google Form
+  const isGoogleForm =
+    window.location.hostname.includes("docs.google.com") &&
+    window.location.pathname.includes("/forms/");
+
+  if (isGoogleForm) {
+    console.log("🎯 Google Forms detected! Using specialized detection...");
+    const googleFields = detectGoogleFormsFields();
+    console.log(`Found ${googleFields.length} Google Forms fields`);
+    return googleFields;
+  }
+
+  const forms = document.querySelectorAll("form");
   console.log(`detectForms: Found ${forms.length} forms on page`);
 
   forms.forEach((form) => {
@@ -238,6 +250,170 @@ function detectTriggerButtons(rootElement = document.body) {
     triggerButtons
   );
   return triggerButtons;
+}
+
+// Detect Google Forms fields
+function detectGoogleFormsFields() {
+  const fields = [];
+
+  // Google Forms uses specific data attributes for questions
+  const questions = document.querySelectorAll('[role="listitem"]');
+
+  console.log(`Found ${questions.length} Google Forms questions`);
+
+  questions.forEach((question) => {
+    // Get question text
+    const questionText =
+      question.querySelector('[role="heading"]')?.textContent?.trim() || "";
+
+    // Find input elements within this question
+    const textInputs = question.querySelectorAll(
+      'input[type="text"], textarea'
+    );
+    const radioInputs = question.querySelectorAll('input[type="radio"]');
+    const checkboxInputs = question.querySelectorAll('input[type="checkbox"]');
+    const selectInputs = question.querySelectorAll("select");
+
+    // Handle text inputs
+    textInputs.forEach((input) => {
+      const dataParams = input.getAttribute("data-params") || "";
+      const ariaLabel = input.getAttribute("aria-label") || "";
+
+      // Use questionText as the primary identifier for Google Forms
+      // This ensures consistency between detection and application
+      const fieldIdentifier =
+        questionText || ariaLabel || input.name || input.id;
+
+      if (!fieldIdentifier) {
+        console.warn("Skipping Google Forms field without identifier");
+        return;
+      }
+
+      fields.push({
+        type: input.tagName.toLowerCase() === "textarea" ? "textarea" : "text",
+        name: fieldIdentifier,
+        id: input.id || "",
+        placeholder: input.placeholder || "",
+        label: questionText || ariaLabel,
+        fieldPattern: "simple",
+        interactionHint: "google_forms",
+        isGoogleForms: true,
+        dataParams: dataParams,
+      });
+
+      console.log(
+        `Google Forms text field: "${questionText}" (identifier: "${fieldIdentifier}")`
+      );
+    });
+
+    // Handle radio buttons
+    if (radioInputs.length > 0) {
+      const options = [];
+      const radioName = radioInputs[0].name;
+
+      // Use questionText as identifier for consistency
+      const fieldIdentifier = questionText || radioName;
+
+      if (!fieldIdentifier) {
+        console.warn("Skipping Google Forms radio without identifier");
+        return;
+      }
+
+      radioInputs.forEach((radio) => {
+        const label = radio.getAttribute("aria-label") || radio.value;
+        options.push({
+          value: radio.value,
+          label: label,
+        });
+      });
+
+      fields.push({
+        type: "radio",
+        name: fieldIdentifier,
+        id: radioInputs[0].id || "",
+        placeholder: "",
+        label: questionText,
+        fieldPattern: "simple",
+        interactionHint: "google_forms",
+        isGoogleForms: true,
+        options: options,
+      });
+
+      console.log(
+        `Google Forms radio field: "${questionText}" (identifier: "${fieldIdentifier}") with ${options.length} options`
+      );
+    }
+
+    // Handle checkboxes
+    if (checkboxInputs.length > 0) {
+      checkboxInputs.forEach((checkbox, idx) => {
+        const checkboxLabel = checkbox.getAttribute("aria-label") || "";
+
+        // Use checkbox aria-label or questionText as identifier
+        const fieldIdentifier = checkboxLabel || questionText || checkbox.name;
+
+        if (!fieldIdentifier) {
+          console.warn("Skipping Google Forms checkbox without identifier");
+          return;
+        }
+
+        fields.push({
+          type: "checkbox",
+          name: fieldIdentifier,
+          id: checkbox.id || "",
+          placeholder: "",
+          label: checkboxLabel || questionText,
+          fieldPattern: "simple",
+          interactionHint: "google_forms",
+          isGoogleForms: true,
+          value: checkbox.value || "on",
+        });
+      });
+
+      console.log(
+        `Google Forms checkbox field: "${questionText}" (${checkboxInputs.length} options)`
+      );
+    }
+
+    // Handle dropdowns
+    selectInputs.forEach((select) => {
+      // Use questionText as identifier for consistency
+      const fieldIdentifier = questionText || select.name || select.id;
+
+      if (!fieldIdentifier) {
+        console.warn("Skipping Google Forms select without identifier");
+        return;
+      }
+
+      const options = [];
+      select.querySelectorAll("option").forEach((option) => {
+        if (option.value) {
+          options.push({
+            value: option.value,
+            label: option.textContent.trim(),
+          });
+        }
+      });
+
+      fields.push({
+        type: "select",
+        name: fieldIdentifier,
+        id: select.id || "",
+        placeholder: "",
+        label: questionText,
+        fieldPattern: "simple",
+        interactionHint: "google_forms",
+        isGoogleForms: true,
+        options: options,
+      });
+
+      console.log(
+        `Google Forms select field: "${questionText}" (identifier: "${fieldIdentifier}") with ${options.length} options`
+      );
+    });
+  });
+
+  return fields;
 }
 
 // Extract field data from a form element with enhanced pattern detection
@@ -891,6 +1067,197 @@ async function applyArrayValues(field, values, addButton) {
   return results;
 }
 
+// Apply value to Google Forms field
+async function applyGoogleFormsValue(fieldIdentifier, value) {
+  console.log(`🔍 Applying Google Forms value to: "${fieldIdentifier}"`);
+  console.log(`   Value to apply: "${value}"`);
+
+  try {
+    // Find all questions
+    const questions = document.querySelectorAll('[role="listitem"]');
+    console.log(`   Found ${questions.length} questions on form`);
+
+    for (const question of questions) {
+      const questionText =
+        question.querySelector('[role="heading"]')?.textContent?.trim() || "";
+
+      // Find text inputs
+      const textInputs = question.querySelectorAll(
+        'input[type="text"], textarea'
+      );
+      for (const input of textInputs) {
+        const inputName = input.name || "";
+        const inputId = input.id || "";
+        const ariaLabel = input.getAttribute("aria-label") || "";
+
+        console.log(
+          `   Checking text input: name="${inputName}", id="${inputId}", question="${questionText}", aria="${ariaLabel}"`
+        );
+
+        // Match by name, id, question text, or aria-label
+        if (
+          inputName === fieldIdentifier ||
+          inputId === fieldIdentifier ||
+          questionText === fieldIdentifier ||
+          ariaLabel === fieldIdentifier ||
+          questionText.toLowerCase().includes(fieldIdentifier.toLowerCase()) ||
+          fieldIdentifier.toLowerCase().includes(questionText.toLowerCase())
+        ) {
+          console.log(`   ✅ MATCH FOUND! Filling text field...`);
+
+          input.focus();
+          await sleep(100);
+
+          // Set value using multiple methods
+          input.value = value;
+          input.setAttribute("value", value);
+
+          // Trigger Google Forms events
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          input.dispatchEvent(new Event("blur", { bubbles: true }));
+
+          input.classList.add("autofilled");
+          setTimeout(() => input.classList.remove("autofilled"), 2000);
+
+          console.log(`✅ Filled Google Forms text field: ${questionText}`);
+          return { success: true, field: fieldIdentifier };
+        }
+      }
+
+      // Find radio buttons
+      const radioInputs = question.querySelectorAll('input[type="radio"]');
+      if (radioInputs.length > 0) {
+        const radioName = radioInputs[0].name || "";
+        console.log(
+          `   Checking radio group: name="${radioName}", question="${questionText}"`
+        );
+
+        if (
+          radioName === fieldIdentifier ||
+          questionText === fieldIdentifier ||
+          questionText.toLowerCase().includes(fieldIdentifier.toLowerCase()) ||
+          fieldIdentifier.toLowerCase().includes(questionText.toLowerCase())
+        ) {
+          console.log(`   ✅ MATCH FOUND! Looking for radio option...`);
+
+          for (const radio of radioInputs) {
+            const label = radio.getAttribute("aria-label") || "";
+            const radioValue = radio.value || "";
+
+            console.log(
+              `      Checking radio option: "${label}" (value="${radioValue}")`
+            );
+
+            if (
+              label.toLowerCase().includes(value.toLowerCase()) ||
+              radioValue.toLowerCase().includes(value.toLowerCase()) ||
+              value.toLowerCase().includes(label.toLowerCase())
+            ) {
+              console.log(`      ✅ Clicking radio option: "${label}"`);
+              radio.click();
+              await sleep(200);
+              console.log(`✅ Selected Google Forms radio: ${label}`);
+              return { success: true, field: fieldIdentifier };
+            }
+          }
+        }
+      }
+
+      // Find checkboxes
+      const checkboxInputs = question.querySelectorAll(
+        'input[type="checkbox"]'
+      );
+      for (const checkbox of checkboxInputs) {
+        const label = checkbox.getAttribute("aria-label") || "";
+        const checkboxName = checkbox.name || "";
+
+        console.log(
+          `   Checking checkbox: name="${checkboxName}", label="${label}", question="${questionText}"`
+        );
+
+        if (
+          checkboxName === fieldIdentifier ||
+          label === fieldIdentifier ||
+          questionText === fieldIdentifier ||
+          questionText.toLowerCase().includes(fieldIdentifier.toLowerCase()) ||
+          fieldIdentifier.toLowerCase().includes(questionText.toLowerCase())
+        ) {
+          const shouldCheck = typeof value === "boolean" ? value : true;
+
+          console.log(`   ✅ MATCH FOUND! Should check: ${shouldCheck}`);
+
+          if (shouldCheck && !checkbox.checked) {
+            checkbox.click();
+            await sleep(200);
+          } else if (!shouldCheck && checkbox.checked) {
+            checkbox.click();
+            await sleep(200);
+          }
+          console.log(`✅ Updated Google Forms checkbox: ${label}`);
+          return { success: true, field: fieldIdentifier };
+        }
+      }
+
+      // Find dropdowns
+      const selects = question.querySelectorAll("select");
+      for (const select of selects) {
+        const selectName = select.name || "";
+        const selectId = select.id || "";
+
+        console.log(
+          `   Checking select: name="${selectName}", id="${selectId}", question="${questionText}"`
+        );
+
+        if (
+          selectName === fieldIdentifier ||
+          selectId === fieldIdentifier ||
+          questionText === fieldIdentifier ||
+          questionText.toLowerCase().includes(fieldIdentifier.toLowerCase()) ||
+          fieldIdentifier.toLowerCase().includes(questionText.toLowerCase())
+        ) {
+          console.log(`   ✅ MATCH FOUND! Looking for option...`);
+
+          for (const option of select.options) {
+            const optionText = option.textContent.trim();
+            const optionValue = option.value;
+
+            console.log(
+              `      Checking option: "${optionText}" (value="${optionValue}")`
+            );
+
+            if (
+              optionText.toLowerCase().includes(value.toLowerCase()) ||
+              optionValue === value ||
+              value.toLowerCase().includes(optionText.toLowerCase())
+            ) {
+              console.log(`      ✅ Selecting option: "${optionText}"`);
+              select.value = optionValue;
+              select.dispatchEvent(new Event("change", { bubbles: true }));
+              console.log(`✅ Selected Google Forms option: ${optionText}`);
+              return { success: true, field: fieldIdentifier };
+            }
+          }
+        }
+      }
+    }
+
+    console.error(`❌ Field not found: "${fieldIdentifier}"`);
+    console.log(`   Available questions on form:`);
+    questions.forEach((q, idx) => {
+      const qText =
+        q.querySelector('[role="heading"]')?.textContent?.trim() ||
+        "No heading";
+      console.log(`   ${idx + 1}. "${qText}"`);
+    });
+
+    return { success: false, field: fieldIdentifier, error: "Field not found" };
+  } catch (error) {
+    console.error(`❌ Error applying Google Forms value:`, error);
+    return { success: false, field: fieldIdentifier, error: error.message };
+  }
+}
+
 // Apply a single suggestion to a form field (enhanced with pattern detection)
 async function applyValueToField(
   fieldIdentifier,
@@ -906,6 +1273,11 @@ async function applyValueToField(
   console.log(`   Hint: ${interactionHint}`);
 
   try {
+    // Handle Google Forms
+    if (interactionHint === "google_forms") {
+      return await applyGoogleFormsValue(fieldIdentifier, value);
+    }
+
     // Handle nested section data (has trigger and fields)
     if (
       typeof value === "object" &&

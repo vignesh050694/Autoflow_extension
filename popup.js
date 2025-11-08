@@ -448,11 +448,99 @@ function removeSuggestionItem(index) {
   }
 }
 
+// Load profiles from Postgres via backend API
+async function loadProfiles() {
+  try {
+    console.log("📂 Fetching profiles from Postgres...");
+    const response = await fetch("http://localhost:8000/api/profiles/");
+    if (!response.ok) {
+      console.error("❌ Failed to load profiles:", response.statusText);
+      return;
+    }
+
+    const data = await response.json();
+    console.log("✅ Received profiles from Postgres:", data.profiles);
+
+    const profileDropdown = document.getElementById("profile-dropdown");
+
+    // Clear existing options except default
+    profileDropdown.innerHTML = '<option value="default">Default</option>';
+
+    // Add profiles from Postgres backend
+    if (data.profiles && data.profiles.length > 0) {
+      data.profiles.forEach((profile) => {
+        // Skip default if it's already in the list
+        if (profile.name.toLowerCase() === "default") return;
+
+        const option = document.createElement("option");
+        // Use kebab-case for consistency with backend storage
+        option.value = profile.name.toLowerCase().replace(/\s+/g, "-");
+        option.textContent = `${profile.name} (${profile.document_count} docs)`;
+        profileDropdown.appendChild(option);
+
+        console.log(
+          `  ✓ Added profile: ${profile.name} (${profile.type}, ${profile.document_count} docs, ID: ${profile.profile_id})`
+        );
+      });
+    }
+
+    // Load saved profile selection from chrome.storage
+    chrome.storage.local.get(["selectedProfile"], (result) => {
+      if (result.selectedProfile) {
+        profileDropdown.value = result.selectedProfile;
+        console.log(
+          "📂 Restored saved profile selection:",
+          result.selectedProfile
+        );
+      }
+    });
+
+    console.log(
+      `✅ Successfully loaded ${
+        data.profiles?.length || 0
+      } profiles from Postgres`
+    );
+  } catch (error) {
+    console.error("❌ Error loading profiles from Postgres:", error);
+  }
+}
+
+// Save selected profile
+function saveSelectedProfile() {
+  const profileDropdown = document.getElementById("profile-dropdown");
+  const selectedProfile = profileDropdown.value;
+
+  chrome.storage.local.set({ selectedProfile }, () => {
+    console.log("💾 Saved profile selection:", selectedProfile);
+  });
+}
+
+// Get selected profile
+function getSelectedProfile() {
+  const profileDropdown = document.getElementById("profile-dropdown");
+  return profileDropdown.value === "default" ? null : profileDropdown.value;
+}
+
 // Initialize popup
 function initialize() {
   console.log("🚀 AutoFlow popup initialized (MVP - No Auth)");
 
   checkAPIStatus();
+  loadProfiles(); // Load available profiles
+
+  // Listen for profile changes
+  const profileDropdown = document.getElementById("profile-dropdown");
+  profileDropdown.addEventListener("change", () => {
+    saveSelectedProfile();
+    showSuccess("Profile switched successfully");
+  });
+
+  // Listen for refresh profiles button
+  const refreshProfilesBtn = document.getElementById("refresh-profiles-btn");
+  refreshProfilesBtn.addEventListener("click", () => {
+    loadProfiles();
+    showSuccess("Profiles refreshed");
+  });
 
   // Set up auto-refresh FIRST before requesting data
   setupAutoRefresh();
