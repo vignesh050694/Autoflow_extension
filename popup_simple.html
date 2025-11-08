@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>AutoFlow</title>
+  <style>
+    body {
+      width: 400px;
+      min-height: 300px;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      font-size: 14px;
+    }
+
+    .container {
+      padding: 16px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .status.connected {
+      background-color: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .status.disconnected {
+      background-color: #ffebee;
+      color: #c62828;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status.connected .status-dot {
+      background-color: #4caf50;
+    }
+
+    .status.disconnected .status-dot {
+      background-color: #f44336;
+    }
+
+    .suggestions-container {
+      margin-top: 16px;
+    }
+
+    .suggestions-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .suggestions-header h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    #apply-all-button {
+      padding: 6px 12px;
+      background-color: #1976d2;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    #apply-all-button:hover {
+      background-color: #1565c0;
+    }
+
+    #apply-all-button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    .suggestion-item {
+      background: #f5f5f5;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+
+    .field-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .field-label {
+      font-weight: 500;
+      color: #333;
+      font-size: 13px;
+    }
+
+    .confidence-badge {
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .confidence-badge.high {
+      background-color: #c8e6c9;
+      color: #2e7d32;
+    }
+
+    .confidence-badge.medium {
+      background-color: #fff9c4;
+      color: #f57f17;
+    }
+
+    .confidence-badge.low {
+      background-color: #ffccbc;
+      color: #d84315;
+    }
+
+    .suggested-value {
+      color: #666;
+      font-size: 13px;
+      margin-bottom: 8px;
+      padding: 6px;
+      background: white;
+      border-radius: 4px;
+    }
+
+    .suggestion-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .apply-btn, .reject-btn {
+      flex: 1;
+      padding: 6px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .apply-btn {
+      background-color: #4caf50;
+      color: white;
+    }
+
+    .apply-btn:hover {
+      background-color: #45a049;
+    }
+
+    .reject-btn {
+      background-color: #f44336;
+      color: white;
+    }
+
+    .reject-btn:hover {
+      background-color: #da190b;
+    }
+
+    .no-fields, .no-suggestions {
+      text-align: center;
+      padding: 32px 16px;
+      color: #666;
+    }
+
+    .error-message {
+      background-color: #ffebee;
+      color: #c62828;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    .loading-spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #1976d2;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>AutoFlow</h1>
+    </div>
+
+    <div id="status" class="status disconnected">
+      <span class="status-dot"></span>
+      <span id="status-text">Checking connection...</span>
+    </div>
+
+    <div id="error-container"></div>
+
+    <div id="suggestions-container" class="suggestions-container" style="display: none;">
+      <div class="suggestions-header">
+        <h2>Suggestions</h2>
+        <button id="apply-all-button">Apply All</button>
+      </div>
+      <div id="suggestions-message-container"></div>
+      <div id="suggestions-list"></div>
+      <div id="processing-time-container" style="font-size: 11px; color: #999; margin-top: 8px;"></div>
+    </div>
+
+    <div id="fields-container"></div>
+    <div id="url-container"></div>
+  </div>
+
+  <script src="popup_simple.js"></script>
+</body>
+</html>

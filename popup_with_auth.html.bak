@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoFlow Form Detector</title>
+  <style>
+    body {
+      width: 400px;
+      min-height: 300px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0 0 16px 0;
+      color: #333;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+
+    .status.connected {
+      background-color: #d4edda;
+      color: #155724;
+    }
+
+    .status.disconnected {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status.connected .status-indicator {
+      background-color: #28a745;
+    }
+
+    .status.disconnected .status-indicator {
+      background-color: #dc3545;
+    }
+
+    .fields-container {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .field-item {
+      padding: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background-color: #f9f9f9;
+    }
+
+    .field-type {
+      font-weight: 600;
+      color: #0066cc;
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .field-detail {
+      font-size: 13px;
+      color: #666;
+      margin: 2px 0;
+    }
+
+    .field-detail strong {
+      color: #333;
+    }
+
+    .no-fields {
+      text-align: center;
+      padding: 32px;
+      color: #999;
+      font-size: 14px;
+    }
+
+    .error-message {
+      padding: 12px;
+      background-color: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 6px;
+      color: #856404;
+      font-size: 13px;
+      margin-bottom: 16px;
+      animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .url-info {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 12px;
+      word-break: break-all;
+    }
+
+    /* Login form styles */
+    .login-container {
+      display: none;
+    }
+
+    .login-container.active {
+      display: block;
+    }
+
+    .main-container {
+      display: none;
+    }
+
+    .main-container.active {
+      display: block;
+    }
+
+    .login-form {
+      padding: 16px 0;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 6px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #0066cc;
+      box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+    }
+
+    .login-button {
+      width: 100%;
+      padding: 12px;
+      background-color: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .login-button:hover {
+      background-color: #0052a3;
+    }
+
+    .login-button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    .auth-error {
+      padding: 12px;
+      background-color: #f8d7da;
+      border: 1px solid #f5c6cb;
+      border-radius: 6px;
+      color: #721c24;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .login-info {
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+      margin-top: 12px;
+    }
+
+    .logout-button {
+      padding: 6px 12px;
+      background-color: #6c757d;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-left: 8px;
+    }
+
+    .logout-button:hover {
+      background-color: #5a6268;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background-color: #e7f3ff;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #004085;
+    }
+
+    /* Suggestions styles */
+    .suggestions-container {
+      margin-top: 16px;
+      display: none;
+    }
+
+    .suggestions-container.active {
+      display: block;
+    }
+
+    .suggestions-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .suggestions-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .apply-all-button {
+      padding: 8px 16px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .apply-all-button:hover {
+      background-color: #218838;
+    }
+
+    .apply-all-button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    .suggestions-list {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .suggestion-item {
+      padding: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background-color: #fff;
+    }
+
+    .field-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .field-label {
+      font-weight: 600;
+      color: #333;
+      font-size: 13px;
+      flex: 1;
+    }
+
+    .confidence-badge {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .confidence-badge.high {
+      background-color: #d4edda;
+      color: #155724;
+    }
+
+    .confidence-badge.medium {
+      background-color: #fff3cd;
+      color: #856404;
+    }
+
+    .confidence-badge.low {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+
+    .warning-icon {
+      font-size: 12px;
+    }
+
+    .suggested-value {
+      padding: 8px;
+      background-color: #f9f9f9;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #333;
+      margin-bottom: 8px;
+      word-break: break-word;
+    }
+
+    .suggestion-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .apply-btn {
+      flex: 1;
+      padding: 8px 12px;
+      background-color: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .apply-btn:hover {
+      background-color: #0052a3;
+    }
+
+    .reject-btn {
+      flex: 1;
+      padding: 8px 12px;
+      background-color: #6c757d;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .reject-btn:hover {
+      background-color: #5a6268;
+    }
+
+    .no-suggestions {
+      text-align: center;
+      padding: 24px;
+      color: #999;
+      font-size: 13px;
+      background-color: #f9f9f9;
+      border-radius: 6px;
+    }
+
+    .suggestions-message {
+      padding: 12px;
+      background-color: #d1ecf1;
+      border: 1px solid #bee5eb;
+      border-radius: 6px;
+      color: #0c5460;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    .processing-time {
+      font-size: 11px;
+      color: #999;
+      text-align: right;
+      margin-top: 8px;
+    }
+
+    /* Loading spinner styles (performance optimization) */
+    .status.loading {
+      background-color: #e7f3ff;
+      color: #004085;
+    }
+
+    .loading-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid #cce5ff;
+      border-top-color: #0066cc;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>AutoFlow Form Detector</h1>
+  
+  <!-- Login Container -->
+  <div id="login-container" class="login-container">
+    <div id="auth-error-container"></div>
+    
+    <div class="login-form">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="Enter your email" autocomplete="email" required>
+      </div>
+      
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password" required>
+      </div>
+      
+      <button id="login-button" class="login-button">Log In</button>
+      
+      <div class="login-info">
+        Log in to access intelligent form autofill features
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Container (shown after login) -->
+  <div id="main-container" class="main-container">
+    <div id="user-info-container"></div>
+    
+    <div id="status" class="status disconnected">
+      <div class="status-indicator"></div>
+      <span id="status-text">Checking connection...</span>
+    </div>
+
+    <div id="error-container"></div>
+
+    <div id="url-container"></div>
+
+    <!-- Suggestions Container -->
+    <div id="suggestions-container" class="suggestions-container">
+      <div class="suggestions-header">
+        <div class="suggestions-title">Autofill Suggestions</div>
+        <button id="apply-all-button" class="apply-all-button">Apply All</button>
+      </div>
+      <div id="suggestions-message-container"></div>
+      <div id="suggestions-list" class="suggestions-list"></div>
+      <div id="processing-time-container" class="processing-time"></div>
+    </div>
+
+    <div id="fields-container" class="fields-container">
+      <div class="no-fields">No form fields detected on this page.</div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

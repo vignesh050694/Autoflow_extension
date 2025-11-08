@@ -1,0 +1,445 @@
+// Background script for API communication and message routing
+
+const DEFAULT_API_BASE_URL = 'http://localhost:8000';
+const HARDCODED_USER_ID = '87f6ee1b-0ca8-4071-a50d-56671c6febe8'; // MVP: Hardcoded user ID
+let latestFieldData = null;
+let apiBaseUrl = DEFAULT_API_BASE_URL;
+let authToken = null;
+
+// MVP: Hardcoded test credentials - auto-login on startup
+const TEST_USER = {
+  email: 'vignesh050694@gmail.com',
+  password: 'test123'
+};
+
+// Auto-login on extension load
+(async function autoLogin() {
+  console.log('🚀 AutoFlow extension starting...');
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(TEST_USER)
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      authToken = data.token;
+      console.log('✅ Auto-login successful');
+    } else {
+      console.error('❌ Auto-login failed');
+    }
+  } catch (error) {
+    console.error('❌ Auto-login error:', error);
+  }
+})();
+
+// MVP: Simple token getter
+async function getAuthToken() {
+  return authToken;
+}
+
+// Handle messages from content script and popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('Background received message:', message);
+
+  if (message.type === 'FIELDS_DETECTED') {
+    // Store the latest field data
+    latestFieldData = message.data;
+    console.log('📝 Fields detected:', message.data.fields.length, 'fields');
+    
+    // Send fields to API
+    sendFieldsToAPI(message.data)
+      .then(response => {
+        console.log('✅ API response:', response);
+        sendResponse({ success: true, response: response });
+      })
+      .catch(error => {
+        console.error('❌ API error:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    
+    return true;
+  }
+
+  if (message.type === 'GET_FIELDS') {
+    // Popup requesting latest field data
+    sendResponse({ 
+      success: true, 
+      data: latestFieldData 
+    });
+    return true;
+  }
+
+  if (message.type === 'GET_API_STATUS') {
+    // Check API connection status
+    checkAPIStatus()
+      .then(status => {
+        sendResponse({ success: true, status: status });
+      })
+      .catch(error => {
+        sendResponse({ success: false, status: 'disconnected', error: error.message });
+      });
+    return true;
+  }
+
+  if (message.type === 'SET_API_URL') {
+    // Update API base URL
+    apiBaseUrl = message.url;
+    chrome.storage.sync.set({ apiBaseUrl: message.url }, () => {
+      console.log('API base URL updated to:', apiBaseUrl);
+      sendResponse({ success: true, url: apiBaseUrl });
+    });
+    return true;
+  }
+
+  if (message.type === 'GET_API_URL') {
+    // Get current API base URL
+    sendResponse({ success: true, url: apiBaseUrl });
+    return true;
+  }
+
+  if (message.type === 'LOGIN') {
+    // Handle login request
+    login(message.email, message.password)
+      .then(response => {
+        sendResponse({ success: true, data: response });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (message.type === 'LOGOUT') {
+    // Handle logout request
+    clearAuthToken()
+      .then(() => {
+        sendResponse({ success: true });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (message.type === 'CHECK_AUTH') {
+    // Check if user is authenticated
+    Promise.all([getAuthToken(), getUserEmail()])
+      .then(([token, email]) => {
+        sendResponse({ 
+          success: true, 
+          authenticated: !!token,
+          email: email
+        });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (message.type === 'APPLY_SUGGESTION') {
+    // Forward single suggestion to content script on active tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs || tabs.length === 0) {
+        sendResponse({ 
+          success: false, 
+          error: 'No active tab found' 
+        });
+        return;
+      }
+
+      const activeTab = tabs[0];
+      
+      // Send message to content script
+      chrome.tabs.sendMessage(
+        activeTab.id,
+        {
+          type: 'APPLY_SUGGESTION',
+          data: message.suggestion
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('Error sending to content script:', chrome.runtime.lastError);
+            sendResponse({ 
+              success: false, 
+              error: 'Content script not loaded. Please refresh the page.' 
+            });
+          } else {
+            // Relay response from content script to popup
+            sendResponse(response);
+          }
+        }
+      );
+    });
+    return true; // Keep channel open for async response
+  }
+
+  if (message.type === 'APPLY_ALL_SUGGESTIONS') {
+    // Forward all suggestions to content script on active tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs || tabs.length === 0) {
+        sendResponse({ 
+          success: false, 
+          error: 'No active tab found' 
+        });
+        return;
+      }
+
+      const activeTab = tabs[0];
+      
+      // Send message to content script
+      chrome.tabs.sendMessage(
+        activeTab.id,
+        {
+          type: 'APPLY_ALL_SUGGESTIONS',
+          data: { suggestions: message.suggestions }
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('Error sending to content script:', chrome.runtime.lastError);
+            sendResponse({ 
+              success: false, 
+              error: 'Content script not loaded. Please refresh the page.' 
+            });
+          } else {
+            // Format response from content script
+            if (response && response.summary) {
+              sendResponse({
+                success: true,
+                appliedCount: response.summary.succeeded,
+                failedCount: response.summary.failed,
+                results: response.results
+              });
+            } else {
+              sendResponse(response);
+            }
+          }
+        }
+      );
+    });
+    return true; // Keep channel open for async response
+  }
+});
+
+// Send fields to AutoFlow_backend API
+async function sendFieldsToAPI(fieldData, retryCount = 0) {
+  const maxRetries = 3;
+  const backoffDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
+  const requestTimeout = 15000; // 15 seconds timeout (performance optimization)
+
+  try {
+    // MVP: Use hardcoded user ID instead of auth token
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-User-ID': HARDCODED_USER_ID
+    };
+
+    // Create abort controller for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeout);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/fields`, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(fieldData),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      return await handleAPIResponse(response, fieldData);
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      
+      // Handle timeout error
+      if (fetchError.name === 'AbortError') {
+        const error = new Error('Request timeout - please try again');
+        error.status = 408;
+        throw error;
+      }
+      
+      throw fetchError;
+    }
+  } catch (error) {
+    return await handleAPIError(error, fieldData, retryCount, maxRetries, backoffDelay);
+  }
+}
+
+// Handle API response
+async function handleAPIResponse(response, fieldData) {
+
+  // Handle 401 Unauthorized - token expired or invalid
+  if (response.status === 401) {
+    console.log('Authentication failed - clearing token');
+    await clearAuthToken();
+    
+    // Notify popup to show login
+    chrome.runtime.sendMessage({ 
+      type: 'AUTH_REQUIRED',
+      message: 'Your session has expired. Please log in again.'
+    });
+    
+    const error = new Error('Authentication expired');
+    error.status = 401;
+    throw error;
+  }
+
+  // Handle 503 Service Unavailable (Qdrant connection errors)
+  if (response.status === 503) {
+    const errorData = await response.json().catch(() => ({}));
+    const error = new Error(errorData.detail || 'Search service unavailable');
+    error.status = 503;
+    throw error;
+  }
+
+  // Handle 500 Internal Server Error (OpenAI/LLM errors)
+  if (response.status === 500) {
+    const errorData = await response.json().catch(() => ({}));
+    const error = new Error(errorData.detail || 'Generation service unavailable');
+    error.status = 500;
+    throw error;
+  }
+
+  // Handle 429 Too Many Requests
+  if (response.status === 429) {
+    const error = new Error('Too many requests. Please wait and try again.');
+    error.status = 429;
+    throw error;
+  }
+
+  // Handle 422 Validation Error
+  if (response.status === 422) {
+    const errorData = await response.json().catch(() => ({}));
+    const error = new Error(errorData.detail || 'Invalid request data');
+    error.status = 422;
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error = new Error(errorData.detail || `API returned ${response.status}: ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  const data = await response.json();
+  
+  // Check cache before storing
+  const cacheKey = generateCacheKey(fieldData.url, fieldData.fields);
+  
+  // Store in session cache (performance optimization)
+  await storeSuggestionsInCache(cacheKey, data);
+  
+  // Store the response data including suggestions
+  if (data) {
+    latestFieldData = {
+      ...fieldData,
+      ...data
+    };
+  }
+  
+  return data;
+}
+
+// Handle API errors with retry logic
+async function handleAPIError(error, fieldData, retryCount, maxRetries, backoffDelay) {
+  console.error(`API request failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
+
+  // Don't retry authentication errors (401)
+  if (error.status === 401 || error.message.includes('Authentication')) {
+    throw error;
+  }
+
+  // Don't retry validation errors (422)
+  if (error.status === 422) {
+    throw error;
+  }
+
+  // Don't retry rate limit errors (429) - let user wait
+  if (error.status === 429) {
+    throw error;
+  }
+
+  // Don't retry timeout errors (408)
+  if (error.status === 408) {
+    throw error;
+  }
+
+  // Retry with exponential backoff for other errors (500, 503, network errors)
+  if (retryCount < maxRetries - 1) {
+    console.log(`Retrying in ${backoffDelay}ms...`);
+    await new Promise(resolve => setTimeout(resolve, backoffDelay));
+    return sendFieldsToAPI(fieldData, retryCount + 1);
+  }
+
+  throw error;
+}
+
+// Generate cache key for suggestions (performance optimization)
+function generateCacheKey(url, fields) {
+  // Create a simple hash from URL and field identifiers
+  const fieldIds = fields.map(f => `${f.name || f.id}`).sort().join(',');
+  return `${url}:${fieldIds}`;
+}
+
+// Store suggestions in session cache (performance optimization)
+async function storeSuggestionsInCache(cacheKey, data) {
+  try {
+    await chrome.storage.session.set({
+      [cacheKey]: {
+        data: data,
+        timestamp: Date.now()
+      }
+    });
+    console.log('Suggestions cached for current page');
+  } catch (error) {
+    console.error('Error caching suggestions:', error);
+    // Non-critical error, continue without caching
+  }
+}
+
+// Get suggestions from session cache (performance optimization)
+async function getSuggestionsFromCache(cacheKey) {
+  try {
+    const result = await chrome.storage.session.get(cacheKey);
+    if (result[cacheKey]) {
+      const cached = result[cacheKey];
+      const cacheAge = Date.now() - cached.timestamp;
+      const cacheMaxAge = 5 * 60 * 1000; // 5 minutes
+      
+      if (cacheAge < cacheMaxAge) {
+        console.log('Using cached suggestions');
+        return cached.data;
+      } else {
+        console.log('Cache expired');
+        // Clean up expired cache
+        await chrome.storage.session.remove(cacheKey);
+      }
+    }
+  } catch (error) {
+    console.error('Error reading cache:', error);
+  }
+  return null;
+}
+
+// Check API connection status
+async function checkAPIStatus() {
+  try {
+    const response = await fetch(`${apiBaseUrl}/`, {
+      method: 'GET',
+    });
+
+    if (response.ok) {
+      return 'connected';
+    } else {
+      return 'error';
+    }
+  } catch (error) {
+    return 'disconnected';
+  }
+}
+
+console.log('AutoFlow background script loaded');

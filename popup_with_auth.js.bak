@@ -1,0 +1,760 @@
+// Popup script for displaying extracted fields
+
+// State management
+let isAuthenticated = false;
+let currentUserEmail = null;
+
+// Check authentication status on load
+async function checkAuthentication() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'CHECK_AUTH' }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('Error checking auth:', chrome.runtime.lastError);
+        resolve({ authenticated: false, email: null });
+        return;
+      }
+      
+      if (response && response.success) {
+        resolve({ 
+          authenticated: response.authenticated,
+          email: response.email || null
+        });
+      } else {
+        resolve({ authenticated: false, email: null });
+      }
+    });
+  });
+}
+
+// Handle login form submission
+async function handleLogin(event) {
+  event.preventDefault();
+  
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const loginButton = document.getElementById('login-button');
+  const authErrorContainer = document.getElementById('auth-error-container');
+  
+  // Clear previous errors
+  authErrorContainer.innerHTML = '';
+  
+  // Validate inputs
+  if (!email || !password) {
+    displayAuthError('Please enter both email and password');
+    return;
+  }
+  
+  // Disable button during login
+  loginButton.disabled = true;
+  loginButton.textContent = 'Logging in...';
+  
+  try {
+    // Send login request to background script
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: 'LOGIN', email, password },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(response);
+          }
+        }
+      );
+    });
+    
+    if (response.success) {
+      // Login successful
+      console.log('Login successful');
+      currentUserEmail = email;
+      isAuthenticated = true;
+      
+      // Clear form
+      document.getElementById('email').value = '';
+      document.getElementById('password').value = '';
+      
+      // Show main UI
+      showMainUI();
+      
+      // Initialize main functionality
+      checkAPIStatus();
+      
+      // Trigger field detection on current page
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs && tabs.length > 0) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'DETECT_FIELDS' }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.log('Content script not ready, will wait for automatic detection');
+            } else {
+              console.log('Field detection triggered after login');
+            }
+          });
+        }
+      });
+      
+      // Request any existing field data
+      requestFieldData();
+    } else {
+      // Login failed
+      displayAuthError(response.error || 'Login failed. Please check your credentials.');
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    displayAuthError('An error occurred during login. Please try again.');
+  } finally {
+    // Re-enable button
+    loginButton.disabled = false;
+    loginButton.textContent = 'Log In';
+  }
+}
+
+// Handle logout
+async function handleLogout() {
+  try {
+    const response = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'LOGOUT' }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response);
+        }
+      });
+    });
+    
+    if (response.success) {
+      console.log('Logout successful');
+      isAuthenticated = false;
+      currentUserEmail = null;
+      showLoginUI();
+    } else {
+      console.error('Logout failed:', response.error);
+    }
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
+}
+
+// Display authentication error
+function displayAuthError(message) {
+  const authErrorContainer = document.getElementById('auth-error-container');
+  authErrorContainer.innerHTML = `<div class="auth-error">${escapeHtml(message)}</div>`;
+}
+
+// Show login UI
+function showLoginUI() {
+  document.getElementById('login-container').classList.add('active');
+  document.getElementById('main-container').classList.remove('active');
+}
+
+// Show main UI
+function showMainUI() {
+  document.getElementById('login-container').classList.remove('active');
+  document.getElementById('main-container').classList.add('active');
+  
+  // Display user info if available
+  if (currentUserEmail) {
+    const userInfoContainer = document.getElementById('user-info-container');
+    userInfoContainer.innerHTML = `
+      <div class="user-info">
+        <span>Logged in as: ${escapeHtml(currentUserEmail)}</span>
+        <button id="logout-button" class="logout-button">Log Out</button>
+      </div>
+    `;
+    
+    // Add logout button listener
+    document.getElementById('logout-button').addEventListener('click', handleLogout);
+  }
+}
+
+// Request field data from background script
+function requestFieldData() {
+  clearError(); // Clear any previous errors
+  showLoading(true); // Show loading indicator (performance optimization)
+  
+  chrome.runtime.sendMessage({ type: 'GET_FIELDS' }, response => {
+    showLoading(false); // Hide loading indicator
+    
+    if (chrome.runtime.lastError) {
+      console.error('Error getting fields:', chrome.runtime.lastError);
+      showError(chrome.runtime.lastError, 'requestFieldData');
+      return;
+    }
+
+    if (response && response.success && response.data) {
+      renderFields(response.data);
+      
+      // Check if we have autofill suggestions
+      if (response.data.suggestions) {
+        renderSuggestions(response.data);
+      } else if (response.data.message) {
+        // Show informational message if no suggestions but message provided
+        showInfo(response.data.message);
+      }
+    } else {
+      renderNoFields();
+    }
+  });
+}
+
+// Check API connection status
+function checkAPIStatus() {
+  chrome.runtime.sendMessage({ type: 'GET_API_STATUS' }, response => {
+    if (chrome.runtime.lastError) {
+      console.error('Error checking API status:', chrome.runtime.lastError);
+      updateStatus('disconnected', 'Error checking connection');
+      return;
+    }
+
+    if (response && response.success) {
+      updateStatus(response.status, getStatusMessage(response.status));
+    } else {
+      updateStatus('disconnected', 'Backend disconnected');
+    }
+  });
+}
+
+// Get status message based on status
+function getStatusMessage(status) {
+  switch (status) {
+    case 'connected':
+      return 'Connected to AutoFlow Backend';
+    case 'disconnected':
+      return 'Backend disconnected';
+    case 'error':
+      return 'Backend error';
+    default:
+      return 'Unknown status';
+  }
+}
+
+// Update connection status display
+function updateStatus(status, message) {
+  const statusElement = document.getElementById('status');
+  const statusText = document.getElementById('status-text');
+
+  statusElement.className = `status ${status}`;
+  statusText.textContent = message;
+}
+
+// Render fields in the UI
+function renderFields(data) {
+  const container = document.getElementById('fields-container');
+  const urlContainer = document.getElementById('url-container');
+
+  if (!data || !data.fields || data.fields.length === 0) {
+    renderNoFields();
+    return;
+  }
+
+  // Display URL
+  if (data.url) {
+    urlContainer.innerHTML = `<div class="url-info"><strong>Page:</strong> ${escapeHtml(data.url)}</div>`;
+  }
+
+  // Render fields
+  const fieldsHtml = data.fields.map(field => {
+    return `
+      <div class="field-item">
+        <div class="field-type">${escapeHtml(field.type)}</div>
+        ${field.label ? `<div class="field-detail"><strong>Label:</strong> ${escapeHtml(field.label)}</div>` : ''}
+        ${field.name ? `<div class="field-detail"><strong>Name:</strong> ${escapeHtml(field.name)}</div>` : ''}
+        ${field.id ? `<div class="field-detail"><strong>ID:</strong> ${escapeHtml(field.id)}</div>` : ''}
+        ${field.placeholder ? `<div class="field-detail"><strong>Placeholder:</strong> ${escapeHtml(field.placeholder)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = fieldsHtml;
+}
+
+// Render no fields message
+function renderNoFields() {
+  const container = document.getElementById('fields-container');
+  container.innerHTML = '<div class="no-fields">No form fields detected on this page.</div>';
+}
+
+// Display error message with auto-dismiss
+function displayError(message, autoDismiss = false) {
+  const errorContainer = document.getElementById('error-container');
+  errorContainer.innerHTML = `<div class="error-message">${escapeHtml(message)}</div>`;
+  
+  // Auto-dismiss after 5 seconds if requested
+  if (autoDismiss) {
+    setTimeout(() => {
+      errorContainer.innerHTML = '';
+    }, 5000);
+  }
+}
+
+// Show user-friendly error messages based on error type
+function showError(error, context = 'general') {
+  console.error(`Error in ${context}:`, error);
+  
+  let userMessage = '';
+  
+  // Parse error message or response
+  const errorMessage = typeof error === 'string' ? error : error.message || '';
+  const errorStatus = error.status || error.statusCode || 0;
+  
+  // Handle specific error scenarios based on HTTP status codes
+  if (errorStatus === 401 || errorMessage.includes('Authentication') || errorMessage.includes('Unauthorized')) {
+    // Authentication errors - show login form
+    userMessage = 'Your session has expired. Please log in again.';
+    isAuthenticated = false;
+    currentUserEmail = null;
+    showLoginUI();
+    displayAuthError(userMessage);
+    return;
+  } else if (errorStatus === 503 || errorMessage.includes('Search service') || errorMessage.includes('Qdrant')) {
+    // Qdrant connection errors
+    userMessage = 'Search service unavailable. Please try again later.';
+  } else if (errorStatus === 500 || errorMessage.includes('Generation service') || errorMessage.includes('OpenAI') || errorMessage.includes('LLM')) {
+    // OpenAI/LLM API errors
+    userMessage = 'Generation service unavailable. Please try again later.';
+  } else if (errorStatus === 429) {
+    // Rate limiting
+    userMessage = 'Too many requests. Please wait a moment and try again.';
+  } else if (errorStatus === 422) {
+    // Validation errors
+    userMessage = 'Invalid form data. Please refresh the page and try again.';
+  } else if (errorMessage.includes('no profile documents') || errorMessage.includes('No profile')) {
+    // No profile documents
+    userMessage = 'No profile documents found. Please upload your profile documents to use autofill.';
+  } else if (errorMessage.includes('Content script not loaded')) {
+    // Content script not loaded
+    userMessage = 'Please refresh the page to enable autofill functionality.';
+  } else if (errorMessage.includes('network') || errorMessage.includes('fetch') || errorMessage.includes('Failed to fetch')) {
+    // Network errors
+    userMessage = 'Unable to connect to the backend. Please check your connection and ensure the backend is running.';
+  } else if (errorMessage) {
+    // Generic error with message
+    userMessage = errorMessage;
+  } else {
+    // Unknown error
+    userMessage = 'An unexpected error occurred. Please try again.';
+  }
+  
+  displayError(userMessage);
+}
+
+// Clear error messages
+function clearError() {
+  const errorContainer = document.getElementById('error-container');
+  errorContainer.innerHTML = '';
+}
+
+// Show/hide loading indicator (performance optimization)
+function showLoading(show) {
+  const statusElement = document.getElementById('status');
+  
+  if (show) {
+    statusElement.classList.add('loading');
+    statusElement.innerHTML = '<div class="loading-spinner"></div><span id="status-text">Loading...</span>';
+  } else {
+    statusElement.classList.remove('loading');
+    // Restore status check
+    checkAPIStatus();
+  }
+}
+
+// Show success message
+function showSuccess(message, autoDismiss = true) {
+  const errorContainer = document.getElementById('error-container');
+  errorContainer.innerHTML = `
+    <div class="error-message" style="background-color: #d4edda; border-color: #c3e6cb; color: #155724;">
+      ${escapeHtml(message)}
+    </div>
+  `;
+  
+  // Auto-dismiss after 3 seconds if requested
+  if (autoDismiss) {
+    setTimeout(() => {
+      errorContainer.innerHTML = '';
+    }, 3000);
+  }
+}
+
+// Show informational message
+function showInfo(message, autoDismiss = false) {
+  const errorContainer = document.getElementById('error-container');
+  errorContainer.innerHTML = `
+    <div class="error-message" style="background-color: #d1ecf1; border-color: #bee5eb; color: #0c5460;">
+      ${escapeHtml(message)}
+    </div>
+  `;
+  
+  // Auto-dismiss after 5 seconds if requested
+  if (autoDismiss) {
+    setTimeout(() => {
+      errorContainer.innerHTML = '';
+    }, 5000);
+  }
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Render autofill suggestions
+function renderSuggestions(data) {
+  const suggestionsContainer = document.getElementById('suggestions-container');
+  const suggestionsList = document.getElementById('suggestions-list');
+  const messageContainer = document.getElementById('suggestions-message-container');
+  const processingTimeContainer = document.getElementById('processing-time-container');
+  
+  // Clear previous content
+  suggestionsList.innerHTML = '';
+  messageContainer.innerHTML = '';
+  processingTimeContainer.innerHTML = '';
+  
+  // Check if we have suggestions
+  if (!data.suggestions || data.suggestions.length === 0) {
+    suggestionsContainer.classList.remove('active');
+    
+    // Show message if provided
+    if (data.message) {
+      messageContainer.innerHTML = `<div class="suggestions-message">${escapeHtml(data.message)}</div>`;
+      suggestionsContainer.classList.add('active');
+    }
+    
+    return;
+  }
+  
+  // Show suggestions container
+  suggestionsContainer.classList.add('active');
+  
+  // Display message if provided
+  if (data.message) {
+    messageContainer.innerHTML = `<div class="suggestions-message">${escapeHtml(data.message)}</div>`;
+  }
+  
+  // Render each suggestion
+  const suggestionsHtml = data.suggestions.map((suggestion, index) => {
+    const confidence = suggestion.confidence || 0;
+    const confidencePercent = Math.round(confidence * 100);
+    
+    // Determine confidence level and badge class
+    let confidenceClass = 'low';
+    let confidenceLabel = 'Low';
+    let showWarning = false;
+    
+    if (confidence >= 0.8) {
+      confidenceClass = 'high';
+      confidenceLabel = 'High';
+    } else if (confidence >= 0.6) {
+      confidenceClass = 'medium';
+      confidenceLabel = 'Medium';
+    } else {
+      showWarning = true;
+    }
+    
+    // Get field label (use field_identifier as fallback)
+    const fieldLabel = suggestion.field_label || suggestion.field_identifier || 'Unknown Field';
+    
+    return `
+      <div class="suggestion-item" data-index="${index}">
+        <div class="field-info">
+          <div class="field-label">${escapeHtml(fieldLabel)}</div>
+          <div class="confidence-badge ${confidenceClass}">
+            ${showWarning ? '<span class="warning-icon">⚠️</span>' : ''}
+            ${confidenceLabel} (${confidencePercent}%)
+          </div>
+        </div>
+        <div class="suggested-value">${escapeHtml(suggestion.suggested_value || '')}</div>
+        <div class="suggestion-actions">
+          <button class="apply-btn" data-index="${index}">Apply</button>
+          <button class="reject-btn" data-index="${index}">Reject</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  suggestionsList.innerHTML = suggestionsHtml;
+  
+  // Display processing time if available
+  if (data.processing_time_ms) {
+    processingTimeContainer.textContent = `Processing time: ${data.processing_time_ms}ms`;
+  }
+  
+  // Add event listeners for apply and reject buttons
+  addSuggestionEventListeners(data.suggestions);
+}
+
+// Add event listeners for suggestion buttons
+function addSuggestionEventListeners(suggestions) {
+  // Apply All button
+  const applyAllButton = document.getElementById('apply-all-button');
+  if (applyAllButton) {
+    applyAllButton.onclick = () => handleApplyAll(suggestions);
+  }
+  
+  // Individual Apply buttons
+  const applyButtons = document.querySelectorAll('.apply-btn');
+  applyButtons.forEach(button => {
+    button.onclick = () => {
+      const index = parseInt(button.getAttribute('data-index'));
+      handleApplySuggestion(suggestions[index], index);
+    };
+  });
+  
+  // Individual Reject buttons
+  const rejectButtons = document.querySelectorAll('.reject-btn');
+  rejectButtons.forEach(button => {
+    button.onclick = () => {
+      const index = parseInt(button.getAttribute('data-index'));
+      handleRejectSuggestion(index);
+    };
+  });
+}
+
+// Handle applying a single suggestion
+function handleApplySuggestion(suggestion, index) {
+  console.log('Applying suggestion:', suggestion);
+  
+  clearError(); // Clear any previous errors
+  showLoading(true); // Show loading indicator (performance optimization)
+  
+  // Send message to background script to apply suggestion
+  chrome.runtime.sendMessage(
+    {
+      type: 'APPLY_SUGGESTION',
+      suggestion: suggestion
+    },
+    response => {
+      showLoading(false); // Hide loading indicator
+      
+      if (chrome.runtime.lastError) {
+        console.error('Error applying suggestion:', chrome.runtime.lastError);
+        showError(chrome.runtime.lastError, 'applySuggestion');
+        return;
+      }
+      
+      if (response && response.success) {
+        console.log('Suggestion applied successfully');
+        showSuccess('Suggestion applied successfully', true);
+        // Remove the suggestion item from UI
+        removeSuggestionItem(index);
+      } else {
+        console.error('Failed to apply suggestion:', response?.error);
+        showError(response?.error || 'Failed to apply suggestion', 'applySuggestion');
+      }
+    }
+  );
+}
+
+// Handle applying all suggestions
+function handleApplyAll(suggestions) {
+  console.log('Applying all suggestions:', suggestions);
+  
+  clearError(); // Clear any previous errors
+  showLoading(true); // Show loading indicator (performance optimization)
+  
+  // Disable the Apply All button
+  const applyAllButton = document.getElementById('apply-all-button');
+  if (applyAllButton) {
+    applyAllButton.disabled = true;
+    applyAllButton.textContent = 'Applying...';
+  }
+  
+  // Send message to background script to apply all suggestions
+  chrome.runtime.sendMessage(
+    {
+      type: 'APPLY_ALL_SUGGESTIONS',
+      suggestions: suggestions
+    },
+    response => {
+      showLoading(false); // Hide loading indicator
+      if (chrome.runtime.lastError) {
+        console.error('Error applying suggestions:', chrome.runtime.lastError);
+        showError(chrome.runtime.lastError, 'applyAllSuggestions');
+        
+        // Re-enable button
+        if (applyAllButton) {
+          applyAllButton.disabled = false;
+          applyAllButton.textContent = 'Apply All';
+        }
+        return;
+      }
+      
+      if (response && response.success) {
+        console.log('All suggestions applied successfully');
+        
+        const appliedCount = response.appliedCount || 0;
+        const failedCount = response.failedCount || 0;
+        const totalCount = suggestions.length;
+        
+        // Show success/failure summary
+        let summaryMessage = '';
+        let summaryStyle = '';
+        
+        if (failedCount === 0) {
+          // All succeeded
+          summaryMessage = `Successfully applied all ${appliedCount} suggestion(s)`;
+          summaryStyle = 'background-color: #d4edda; border-color: #c3e6cb; color: #155724;';
+        } else if (appliedCount === 0) {
+          // All failed
+          summaryMessage = `Failed to apply all ${totalCount} suggestion(s)`;
+          summaryStyle = 'background-color: #f8d7da; border-color: #f5c6cb; color: #721c24;';
+        } else {
+          // Partial success
+          summaryMessage = `Applied ${appliedCount} of ${totalCount} suggestion(s). ${failedCount} failed.`;
+          summaryStyle = 'background-color: #fff3cd; border-color: #ffc107; color: #856404;';
+        }
+        
+        // Show summary in message container
+        const messageContainer = document.getElementById('suggestions-message-container');
+        messageContainer.innerHTML = `
+          <div class="suggestions-message" style="${summaryStyle}">
+            ${summaryMessage}
+          </div>
+        `;
+        
+        // Show detailed results if available
+        if (response.results && response.results.length > 0) {
+          const failedFields = response.results
+            .filter(r => !r.success)
+            .map(r => r.field || 'Unknown field');
+          
+          if (failedFields.length > 0) {
+            showError(`Failed to apply: ${failedFields.join(', ')}`, 'applyAllSuggestions');
+          }
+        }
+        
+        // Clear suggestions list
+        const suggestionsList = document.getElementById('suggestions-list');
+        suggestionsList.innerHTML = '';
+        
+        // Hide Apply All button
+        if (applyAllButton) {
+          applyAllButton.style.display = 'none';
+        }
+      } else {
+        console.error('Failed to apply suggestions:', response?.error);
+        showError(response?.error || 'Failed to apply suggestions', 'applyAllSuggestions');
+        
+        // Re-enable button
+        if (applyAllButton) {
+          applyAllButton.disabled = false;
+          applyAllButton.textContent = 'Apply All';
+        }
+      }
+    }
+  );
+}
+
+// Handle rejecting a suggestion
+function handleRejectSuggestion(index) {
+  console.log('Rejecting suggestion at index:', index);
+  removeSuggestionItem(index);
+}
+
+// Remove a suggestion item from the UI
+function removeSuggestionItem(index) {
+  const suggestionItem = document.querySelector(`.suggestion-item[data-index="${index}"]`);
+  if (suggestionItem) {
+    suggestionItem.style.transition = 'opacity 0.3s';
+    suggestionItem.style.opacity = '0';
+    
+    setTimeout(() => {
+      suggestionItem.remove();
+      
+      // Check if there are any suggestions left
+      const remainingSuggestions = document.querySelectorAll('.suggestion-item');
+      if (remainingSuggestions.length === 0) {
+        const suggestionsList = document.getElementById('suggestions-list');
+        suggestionsList.innerHTML = '<div class="no-suggestions">No suggestions remaining</div>';
+        
+        // Hide Apply All button
+        const applyAllButton = document.getElementById('apply-all-button');
+        if (applyAllButton) {
+          applyAllButton.style.display = 'none';
+        }
+      }
+    }, 300);
+  }
+}
+
+// Initialize popup
+async function initialize() {
+  console.log('🚀 Popup initialized');
+  
+  // Set up login form listener
+  const loginButton = document.getElementById('login-button');
+  if (loginButton) {
+    loginButton.addEventListener('click', handleLogin);
+  }
+  
+  // Handle Enter key in login form
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  
+  if (emailInput && passwordInput) {
+    emailInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        handleLogin(e);
+      }
+    });
+    
+    passwordInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        handleLogin(e);
+      }
+    });
+  }
+  
+  // Check authentication status
+  console.log('🔍 Checking authentication status...');
+  const authStatus = await checkAuthentication();
+  console.log('✅ Auth status:', authStatus);
+  
+  isAuthenticated = authStatus.authenticated;
+  currentUserEmail = authStatus.email;
+  
+  if (isAuthenticated) {
+    console.log('✅ User is authenticated:', currentUserEmail);
+    // User is logged in, show main UI
+    showMainUI();
+    checkAPIStatus();
+    
+    // Trigger field detection on current page
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs.length > 0) {
+        console.log('📤 Sending DETECT_FIELDS to tab:', tabs[0].id);
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'DETECT_FIELDS' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.log('⚠️ Content script not ready yet, will wait for fields');
+          } else {
+            console.log('✅ Field detection triggered:', response);
+          }
+        });
+      }
+    });
+    
+    // Request any existing field data
+    requestFieldData();
+  } else {
+    console.log('❌ User is NOT authenticated, showing login form');
+    // User is not logged in, show login form
+    showLoginUI();
+  }
+}
+
+// Listen for auth required messages from background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'AUTH_REQUIRED') {
+    console.log('Authentication required:', message.message);
+    isAuthenticated = false;
+    currentUserEmail = null;
+    showLoginUI();
+    
+    if (message.message) {
+      displayAuthError(message.message);
+    }
+  }
+});
+
+// Run on popup load
+document.addEventListener('DOMContentLoaded', initialize);
